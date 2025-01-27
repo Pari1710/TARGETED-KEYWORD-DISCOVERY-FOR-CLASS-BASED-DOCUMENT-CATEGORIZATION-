@@ -1,0 +1,265 @@
+main.py:- 
+from nbformat import read 
+import streamlit as st 
+from io import StringIO  
+import docx2txt 
+from logger import Logger 
+from PyPDF2 import PdfFileReader 
+import os 
+import time 
+from streamlit_quill import st_quill 
+from process import text_process, text_to_pdf, text_doc 
+from docx import Document 
+file = open("log.txt", "a+") 
+logger = Logger() 
+def save_to_file(str_data, readmode = "w"): 
+if readmode == "w": 
+with open(os.path.join("userdata.txt"), readmode) as file_obj: 
+file_obj.write(str_data) 
+else: 
+st.session_state['user_data'] = 1 
+with open(os.path.join("userdata.txt"), readmode) as file_obj: 
+file_obj.write(str_data) 
+logger.log(file, "file saved") 
+def process_data(uploaded_file) -> str: 
+try: 
+55 
+ 
+56 
+ 
+            data = docx2txt.process(uploaded_file) 
+            logger.log(file, "data processed to str") 
+            return data 
+        except KeyError as e: 
+            logger.log(file, f"data processing failed: {e}") 
+            return None 
+ 
+ 
+def get_doc(uploaded_file): 
+    if uploaded_file is not None: 
+ 
+        if st.button("proceed"): 
+             
+            str_data = process_data(uploaded_file) 
+            if str_data: 
+                st.subheader('Edit Data') 
+                st.session_state['str_value'] = str_data 
+                logger.log(file, "updated data to session from doc string") 
+                st.session_state['load_editor'] = True 
+                return str_data 
+            else: 
+                st.subheader('File Corrupted please upload other file') 
+                return str_data 
+ 
+def run_editor(str_data, key = "editor"): 
+    # Spawn a new Quill editor 
+    logger.log(file, "starting editor") 
+    content = st_quill(value = str_data,key=key) 
+         
+    st.session_state['str_value'] = content 
+    logger.log(file, "returning editor new content") 
+    return content 
+ 
+ 
+if "load_state" not in st.session_state: 
+    st.session_state['load_state'] = False 
+    st.session_state['load_editor'] = False 
+    st.session_state['str_value'] = None 
+if __name__ == '__main__': 
+st.session_state['user_data'] = 0 
+st.session_state['load_state'] = True 
+boundary = "\n"*4 + "=====Keywords======" + "\n"*4 
+st.title("Keyword Extractor") 
+st.caption("Keyword extraction technique will sift through the whole set of 
+data in minutes and obtain the words and phrases that best describe each subject. 
+This way, you can easily identify which parts of the available data cover the 
+subjects you are looking for while saving your teams many hours of manual 
+processing.") 
+st.write("\n") 
+st.subheader("Upload File") 
+logger.log(file, "init done") 
+uploaded_file = st.file_uploader("Upload Doc or Docx File Only",type = 
+[".doc","docx"]) 
+str_data = get_doc(uploaded_file) 
+if str_data or st.session_state['load_editor']: 
+data = run_editor(str_data) 
+if st.session_state['str_value'] is not None: 
+if st.button("save & Extract") or st.session_state['load_state']: 
+logger.log(file, "Saving userdata") 
+data = data + boundary 
+save_to_file(data) 
+logger.log(file, "user edited data saved. no extracting data") 
+save_to_file(text_process(data), readmode="a+") 
+logger.log(file, "data extracted and appended to the original userdata") 
+57 
+ 
+58 
+ 
+            if st.session_state['user_data']:     
+                if st.checkbox("Accept Terms & Condition"): 
+                    genre = st.radio( 
+                    "Download as", 
+                    ('PDF', 'DOC')) 
+ 
+                    with open(os.path.join("userdata.txt"), 'r', encoding="latin-1") as df: 
+                        if genre == 'PDF': 
+                            text_to_pdf(df, 'keywords.pdf') 
+                            with open(os.path.join("keywords.pdf"), "rb") as pdf_file: 
+                                PDFbyte = pdf_file.read() 
+ 
+                                st.download_button(label="Export as PDF", 
+                                data=PDFbyte, 
+                                file_name="keywords.pdf", 
+                                mime='application/octet-stream') 
+ 
+                        else: 
+                            text_doc(df, 'keywords') 
+                            with open(os.path.join("keywords.doc"), "rb") as doc_file: 
+                                docbyte = doc_file.read() 
+ 
+                                st.download_button(label="Export as DOC", 
+                                data=docbyte, 
+                                file_name="keywords.doc", 
+                                mime='application/octet-stream') 
+ 
+ 
+ 
+ 
+ 
+             
+ 
+             
+                 
+ 
+ 
+ 
+process.py:- 
+from cmath import log 
+import spacy 
+import re 
+import string 
+import textwrap 
+from fpdf import FPDF 
+from logger import Logger 
+import os 
+import base64 
+import streamlit as st 
+from docx import Document 
+from sklearn.feature_extraction.text import TfidfVectorizer 
+import nltk 
+from nltk.corpus import stopwords # Import stopwords from nltk.corpus 
+from nltk.stem import WordNetLemmatizer 
+import en_core_web_sm 
+from nltk.corpus import wordnet as wn 
+import pandas as pd 
+from rake_nltk import Rake 
+import pytextrank 
+file = open("log.txt", "a+") 
+logger = Logger() 
+def preprocessing(text): 
+logger.log(file, f"starting preprocessing") 
+# Make lower 
+text = text.lower() 
+# Remove line breaks 
+text = re.sub(r'\n', ' ', text) 
+# Remove line breaks 
+59 
+ 
+60 
+ 
+    text = re.sub(r'\t', '', text) 
+ 
+    text = re.sub("[^A-Za-z0-9\s\.\,]+"," ", text) 
+ 
+    text = re.sub(r'[0-9]', ' ', text) 
+ 
+    text = text.split() 
+ 
+    with open(os.path.join("stopwords.txt"),'r') as useless_words: 
+        lis = useless_words.read().split("\n") 
+        try: 
+            stop_words = stopwords.words('english') 
+            logger.log(file, f"trying to load eng stopwords from model") 
+ 
+        except: 
+            logger.log(file, f"load failed downloading stopwords from nlkt") 
+            nltk.download('stopwords') 
+            stop_words = stopwords.words('english') 
+            lis = set(lis + stop_words) 
+        finally: 
+            lis = list(lis) + ['hi', 'im'] 
+ 
+            try: 
+                logger.log(file, f"trying loading wordlemma") 
+                lem = WordNetLemmatizer() 
+                lem.lemmatize("testing") 
+            except: 
+                logger.log(file, f"loading failed trying to download wordnetm and 
+omw 1.4") 
+                #call the nltk downloader 
+                nltk.download('wordnet') 
+                nltk.download('omw-1.4') 
+                lem = WordNetLemmatizer() #stemming 
+            finally: 
+                logger.log(file, f"lemmatize words preprocessing done") 
+                text_filtered = [lem.lemmatize(word) for word in text if not word in 
+lis] 
+                return " ".join(text_filtered) 
+def text_process(text): 
+text = preprocessing(text) 
+data = textrank(text) 
+logger.log(file, f"text rank done") 
+data = ", \n".join(str(d) for d in data) 
+if data == "": 
+data = "None Keyword Found" 
+logger.log(file, "data cleaned and returned") 
+return data 
+def text_to_pdf(text, filename): 
+pdf = FPDF()   
+pdf.add_page() 
+pdf.set_font("Arial", size = 15) 
+# insert the texts in pdf 
+pdf.set_line_width(1) 
+for x in text: 
+pdf.cell(0,5, txt = x, ln = 1, align = 'L') 
+# save the pdf with name .pdf 
+pdf.output(filename)  
+logger.log(file, "PDF File saved") 
+def text_doc(file, filename): 
+doc = Document() 
+line = file.read() 
+doc.add_paragraph(line) 
+doc.save(filename + ".doc") 
+def tfidf(text: str) -> list: 
+vectorizer = TfidfVectorizer() 
+61 
+vectors = vectorizer.fit_transform([text]) 
+feature_names = vectorizer.get_feature_names_out() 
+dense = vectors.todense() 
+denselist = dense.tolist() 
+df = pd.DataFrame(denselist, columns=feature_names) 
+df = df.transpose().reset_index() 
+df.columns = ['words', 'value'] 
+df = df.sort_values('value', ascending = False) 
+logger.log(file, f"tfidf done returning top 50 words") 
+return df.loc[:50, 'words'].tolist() 
+def rake(text: str) -> list: 
+r = Rake() 
+r.extract_keywords_from_text(text) 
+keywordList = [] 
+rankedList = r.get_ranked_phrases_with_scores() 
+for keyword in rankedList: 
+keyword_updated = keyword[1].split() 
+keyword_updated_string    = " ".join(keyword_updated[:2]) 
+keywordList.append(keyword_updated_string) 
+if(len(keywordList)>9): 
+break 
+logger.log(file, f"used rake now returning") 
+return keywordList 
+def textrank(text): 
+logger.log(file, f"spacy + text rank function starting") 
+nlp = en_core_web_sm.load() 
+nlp.add_pipe("textrank") 
+doc = nlp(text) 
+# examine the top-ranked phrases in the document 
+return [text.text for text in doc._.phrases[:40] if len(text.text) < 30] 
